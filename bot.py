@@ -1,6 +1,6 @@
 import logging
 import random
-from typing import Dict, List, Optional, Set
+from typing import Dict, List, Optional
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
 import os
@@ -146,7 +146,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/startgame - Start the game when ready\n"
         "/status - Check game status\n"
         "/cards - View your cards\n"
-        "/help - Show this help message"
+        "/cancel - Cancel the current game"
     )
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -163,7 +163,8 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/join - Join game\n"
         "/startgame - Begin the game\n"
         "/status - Game status\n"
-        "/cards - Your cards"
+        "/cards - Your cards\n"
+        "/cancel - Cancel the current game"
     )
 
 async def new_game(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -184,7 +185,16 @@ async def new_game(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     
     games[chat_id] = ParchiDhapGame(chat_id, n)
-    await update.message.reply_text(f"New game created with {n} card sets! Use /join to join the game.")
+    await update.message.reply_text(f"New game created with {n} card sets! Use /join to join or /cancel to cancel.")
+
+async def cancel_game(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Cancel the current game"""
+    chat_id = update.effective_chat.id
+    if chat_id not in games:
+        await update.message.reply_text("No active game to cancel!")
+        return
+    del games[chat_id]
+    await update.message.reply_text("The current game has been canceled. Use /newgame to start a fresh game.")
 
 async def join_game(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Join the current game"""
@@ -311,8 +321,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 try:
                     await context.bot.send_message(
                         game.get_next_player(),
-                        f"You received card {card}! Do you want to accept it?",
-                        reply_markup=reply_markup
+                        f"You received card {card}! Do you want to accept it?", reply_markup=reply_markup
                     )
                 except Exception as e:
                     logger.error(f"Could not send message to next player: {e}")
@@ -326,7 +335,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             accept = data == "accept_card"
             game.receive_card(accept)
             
-            if game.game_finished:
+            if(game.game_finished):
                 winner_name = game.player_names[game.winner]
                 await query.edit_message_text(f"🎉 Game finished! Winner: {winner_name}")
                 await context.bot.send_message(chat_id, f"🎉 Game finished! Winner: {winner_name}")
@@ -340,13 +349,18 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             await query.edit_message_text("This is not for you!")
 
+
 def main():
     """Main function"""
     # Get token from environment variable
     TOKEN = os.getenv('BOT_TOKEN', '7939689975:AAFUL_4FXaFCCIC36Z2Ma6NGQ0QI5urqe_k')
     
     # Create application
-    application = Application.builder().token(TOKEN).build()
+    try:
+        application = Application.builder().token(TOKEN).build()
+    except Exception as e:
+        logger.error(f"Failed to create application: {e}")
+        return
     
     # Add handlers
     application.add_handler(CommandHandler("start", start))
@@ -356,20 +370,40 @@ def main():
     application.add_handler(CommandHandler("startgame", start_game))
     application.add_handler(CommandHandler("cards", show_cards))
     application.add_handler(CommandHandler("status", game_status))
+    application.add_handler(CommandHandler("cancel", cancel_game))
     application.add_handler(CallbackQueryHandler(button_callback))
     
     # Start the bot
-    if os.getenv('HEROKU_APP_NAME'):
-        # Running on Heroku
-        PORT = int(os.environ.get('PORT', 5000))
-        application.run_webhook(
-            listen="0.0.0.0",
-            port=PORT,
-            url_path=TOKEN,
-            webhook_url=f"https://{os.getenv('HEROKU_APP_NAME')}.herokuapp.com/{TOKEN}"
-        )
-    else:
-        # Running locally
+    try:
+        if os.getenv('RENDER_SERVICE_NAME'):
+            # Running on Render
+            PORT = int(os.environ.get('PORT', 10000))
+            RENDER_EXTERNAL_URL = os.getenv('RENDER_EXTERNAL_URL')
+            logger.info(f"Starting webhook on port {PORT}")
+            logger.info(f"Webhook URL: {RENDER_EXTERNAL_URL}/{TOKEN}")
+            application.run_webhook(
+                listen="0.0.0.0",
+                port=PORT,
+                url_path=TOKEN,
+                webhook_url=f"{RENDER_EXTERNAL_URL}/{TOKEN}"
+            )
+        elif os.getenv('HEROKU_APP_NAME'):
+            # Running on Heroku
+            PORT = int(os.environ.get('PORT', 5000))
+            application.run_webhook(
+                listen="0.0.0.0",
+                port=PORT,
+                url_path=TOKEN,
+                webhook_url=f"https://{os.getenv('HEROKU_APP_NAME')}.herokuapp.com/{TOKEN}"
+            )
+        else:
+            # Running locally
+            logger.info("Starting polling mode")
+            application.run_polling()
+    except Exception as e:
+        logger.error(f"Failed to start bot: {e}")
+        # Try polling as fallback
+        logger.info("Trying polling mode as fallback")
         application.run_polling()
 
 if __name__ == '__main__':
