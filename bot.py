@@ -100,17 +100,6 @@ class ParchiDhapGame:
         return f"Current turn: {cur}"
 
 # Bot commands
-def build_handlers(app: Application):
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("help", help_command))
-    app.add_handler(CommandHandler("newgame", new_game))
-    app.add_handler(CommandHandler("join", join_game))
-    app.add_handler(CommandHandler("startgame", start_game))
-    app.add_handler(CommandHandler("cards", show_cards))
-    app.add_handler(CommandHandler("status", game_status))
-    app.add_handler(CommandHandler("cancel", cancel_game))
-    app.add_handler(CallbackQueryHandler(button_callback))
-
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "Welcome to 16 Parchi Dhap! 🎮\n\n"
@@ -120,7 +109,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/startgame - Begin\n"
         "/status - Status\n"
         "/cards - Your cards\n"
-        "/cancel - Cancel game"
+        "/cancel - Cancel game\n"
+        "/stop - Stop bot"
     )
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -131,7 +121,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "3. Give one on your turn\n"
         "4. Receiver swaps\n"
         "5. First to 4 wins\n"
-        "Commands: /newgame, /join, /startgame, /status, /cards, /cancel"
+        "Commands: /newgame, /join, /startgame, /status, /cards, /cancel, /stop"
     )
 
 async def new_game(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -154,6 +144,10 @@ async def cancel_game(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return await update.message.reply_text("Game canceled.")
     await update.message.reply_text("No active game.")
 
+async def stop_bot(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("Bot is shutting down... 🌙")
+    context.application.stop()
+
 async def join_game(update: Update, context: ContextTypes.DEFAULT_TYPE):
     cid = update.effective_chat.id
     uid = update.effective_user.id
@@ -175,7 +169,7 @@ async def start_game(update: Update, context: ContextTypes.DEFAULT_TYPE):
     game = games[cid]
     if not game.start_game():
         return await update.message.reply_text(f"Need 4+ players ({len(game.players)} now).")
-    cp = game.player_names[game.get_current_player()]
+    cp = game.icipant_names[game.get_current_player()]
     await update.message.reply_text(f"Game started! {cp}'s turn.")
     for pid in game.players:
         cards = ", ".join(map(str, game.player_cards[pid]))
@@ -218,7 +212,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return await q.edit_message_text("No game.")
     game = games[cid]
     data = q.data
-    if data.startswith("give_"):
+    if d.startswith("give_"):
         c = int(data.split("_")[1])
         if uid != game.get_current_player():
             return await q.edit_message_text("Not your turn.")
@@ -249,6 +243,15 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 if __name__ == "__main__":
     TOKEN = os.getenv("BOT_TOKEN")
     app = Application.builder().token(TOKEN).build()
-    build_handlers(app)
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("help", help_command))
+    app.add_handler(CommandHandler("newgame", new_game))
+    app.add_handler(CommandHandler("join", join_game))
+    app.add_handler(CommandHandler("startgame", start_game))
+    app.add_handler(CommandHandler("cards", show_cards))
+    app.add_handler(CommandHandler("status", game_status))
+    app.add_handler(CommandHandler("cancel", cancel_game))
+    app.add_handler(CommandHandler("stop", stop_bot))
+    app.add_handler(CallbackQueryHandler(button_callback))
     logger.info("Bot started in polling mode")
     app.run_polling()
