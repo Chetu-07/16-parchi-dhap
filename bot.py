@@ -13,13 +13,12 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Game state storage
 games: Dict[int, 'ParchiDhapGame'] = {}
 
 class ParchiDhapGame:
     def __init__(self, chat_id: int, n: int = 4):
         self.chat_id = chat_id
-        self.n = n  # Number of card sets (4 to 6)
+        self.n = n
         self.players: List[int] = []
         self.player_names: Dict[int, str] = {}
         self.deck: List[int] = []
@@ -30,381 +29,226 @@ class ParchiDhapGame:
         self.pending_from_player: Optional[int] = None
         self.game_finished = False
         self.winner: Optional[int] = None
-        
-        # Create deck with n sets of 4 cards each
         self.create_deck()
-    
+
     def create_deck(self):
-        """Create a deck with n*4 cards (n sets of 4 identical cards)"""
-        self.deck = []
-        for i in range(1, self.n + 1):
-            for _ in range(4):
-                self.deck.append(i)
+        self.deck = [i for i in range(1, self.n + 1) for _ in range(4)]
         random.shuffle(self.deck)
-    
+
     def add_player(self, user_id: int, name: str) -> bool:
-        """Add a player to the game"""
         if user_id not in self.players and len(self.players) < self.n:
             self.players.append(user_id)
             self.player_names[user_id] = name
             return True
         return False
-    
+
     def start_game(self) -> bool:
-        """Start the game if we have enough players"""
         if len(self.players) >= 4 and not self.game_started:
             self.deal_cards()
             self.game_started = True
             return True
         return False
-    
+
     def deal_cards(self):
-        """Deal 4 cards to each player"""
-        cards_per_player = 4
-        for i, player_id in enumerate(self.players):
-            start_idx = i * cards_per_player
-            end_idx = start_idx + cards_per_player
-            self.player_cards[player_id] = self.deck[start_idx:end_idx]
-    
+        for i, pid in enumerate(self.players):
+            self.player_cards[pid] = self.deck[i*4:(i+1)*4]
+
     def get_current_player(self) -> int:
-        """Get the current player's ID"""
         return self.players[self.current_player_index]
-    
+
     def get_next_player(self) -> int:
-        """Get the next player's ID"""
-        next_index = (self.current_player_index + 1) % len(self.players)
-        return self.players[next_index]
-    
+        return self.players[(self.current_player_index + 1) % len(self.players)]
+
     def give_card(self, card: int) -> bool:
-        """Current player gives a card to the next player"""
-        current_player = self.get_current_player()
-        next_player = self.get_next_player()
-        
-        if card in self.player_cards[current_player]:
+        cp = self.get_current_player()
+        if card in self.player_cards[cp]:
             self.pending_card = card
-            self.pending_from_player = current_player
+            self.pending_from_player = cp
             return True
         return False
-    
+
     def receive_card(self, accept: bool) -> bool:
-        """Next player receives the card"""
         if self.pending_card is None:
             return False
-        
-        current_player = self.get_current_player()
-        next_player = self.get_next_player()
-        
+        cp = self.get_current_player()
+        np = self.get_next_player()
         if accept:
-            # Next player accepts the card
-            self.player_cards[current_player].remove(self.pending_card)
-            self.player_cards[next_player].append(self.pending_card)
-            
-            # Check if current player won
-            if self.check_win(current_player):
-                self.winner = current_player
+            self.player_cards[cp].remove(self.pending_card)
+            self.player_cards[np].append(self.pending_card)
+            if self.check_win(cp):
+                self.winner = cp
                 self.game_finished = True
                 return True
-        
-        # Move to next player
         self.current_player_index = (self.current_player_index + 1) % len(self.players)
         self.pending_card = None
         self.pending_from_player = None
-        
         return True
-    
-    def check_win(self, player_id: int) -> bool:
-        """Check if player has won (all cards are the same)"""
-        cards = self.player_cards[player_id]
-        if len(cards) == 0:
-            return False
-        return len(set(cards)) == 1
-    
+
+    def check_win(self, pid: int) -> bool:
+        cards = self.player_cards[pid]
+        return bool(cards) and len(set(cards)) == 1
+
     def get_game_status(self) -> str:
-        """Get current game status"""
         if not self.game_started:
             return f"Game not started. Players: {len(self.players)}/{self.n}"
-        
         if self.game_finished:
-            winner_name = self.player_names[self.winner]
-            return f"🎉 Game finished! Winner: {winner_name}"
-        
-        current_player_name = self.player_names[self.get_current_player()]
+            return f"🎉 Game finished! Winner: {self.player_names[self.winner]}"
+        cur = self.player_names[self.get_current_player()]
         if self.pending_card:
-            next_player_name = self.player_names[self.get_next_player()]
-            return f"Waiting for {next_player_name} to accept/reject card {self.pending_card} from {current_player_name}"
-        else:
-            return f"Current turn: {current_player_name}"
+            nxt = self.player_names[self.get_next_player()]
+            return f"Waiting for {nxt} to accept/reject card {self.pending_card} from {cur}"
+        return f"Current turn: {cur}"
 
 # Bot commands
+def build_handlers(app: Application):
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("help", help_command))
+    app.add_handler(CommandHandler("newgame", new_game))
+    app.add_handler(CommandHandler("join", join_game))
+    app.add_handler(CommandHandler("startgame", start_game))
+    app.add_handler(CommandHandler("cards", show_cards))
+    app.add_handler(CommandHandler("status", game_status))
+    app.add_handler(CommandHandler("cancel", cancel_game))
+    app.add_handler(CallbackQueryHandler(button_callback))
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Start command"""
     await update.message.reply_text(
         "Welcome to 16 Parchi Dhap! 🎮\n\n"
         "Commands:\n"
-        "/newgame <n> - Start a new game (n = 4 to 6)\n"
-        "/join - Join the current game\n"
-        "/startgame - Start the game when ready\n"
-        "/status - Check game status\n"
-        "/cards - View your cards\n"
-        "/cancel - Cancel the current game"
+        "/newgame <n> - New game (4-6 sets)\n"
+        "/join - Join game\n"
+        "/startgame - Begin\n"
+        "/status - Status\n"
+        "/cards - Your cards\n"
+        "/cancel - Cancel game"
     )
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Help command"""
     await update.message.reply_text(
-        "🎮 16 Parchi Dhap Rules:\n\n"
-        "1. Each player gets 4 cards\n"
-        "2. Goal: Get all 4 cards of the same number\n"
-        "3. On your turn, give one card to the next player\n"
-        "4. The next player must accept it and give you a different card\n"
-        "5. First player to get all matching cards wins!\n\n"
-        "Commands:\n"
-        "/newgame <n> - Start new game (4-6 players)\n"
-        "/join - Join game\n"
-        "/startgame - Begin the game\n"
-        "/status - Game status\n"
-        "/cards - Your cards\n"
-        "/cancel - Cancel the current game"
+        "🎮 Rules:\n"
+        "1. 4 cards each\n"
+        "2. Collect 4 of a kind\n"
+        "3. Give one on your turn\n"
+        "4. Receiver swaps\n"
+        "5. First to 4 wins\n"
+        "Commands: /newgame, /join, /startgame, /status, /cards, /cancel"
     )
 
 async def new_game(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Create a new game"""
-    chat_id = update.effective_chat.id
-    
-    # Parse n parameter
+    cid = update.effective_chat.id
     try:
-        n = int(context.args[0]) if context.args else 4
-        if n < 4 or n > 6:
-            await update.message.reply_text("Number of card sets must be between 4 and 6!")
-            return
-    except (IndexError, ValueError):
+        n = int(context.args[0])
+    except:
         n = 4
-    
-    if chat_id in games:
-        await update.message.reply_text("A game is already active in this chat!")
-        return
-    
-    games[chat_id] = ParchiDhapGame(chat_id, n)
-    await update.message.reply_text(f"New game created with {n} card sets! Use /join to join or /cancel to cancel.")
+    if n < 4 or n > 6:
+        return await update.message.reply_text("Sets must be 4-6.")
+    if cid in games:
+        return await update.message.reply_text("Game already active.")
+    games[cid] = ParchiDhapGame(cid, n)
+    await update.message.reply_text(f"New game with {n} sets. /join to enter or /cancel.")
 
 async def cancel_game(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Cancel the current game"""
-    chat_id = update.effective_chat.id
-    if chat_id not in games:
-        await update.message.reply_text("No active game to cancel!")
-        return
-    del games[chat_id]
-    await update.message.reply_text("The current game has been canceled. Use /newgame to start a fresh game.")
+    cid = update.effective_chat.id
+    if cid in games:
+        del games[cid]
+        return await update.message.reply_text("Game canceled.")
+    await update.message.reply_text("No active game.")
 
 async def join_game(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Join the current game"""
-    chat_id = update.effective_chat.id
-    user_id = update.effective_user.id
-    user_name = update.effective_user.first_name
-    
-    if chat_id not in games:
-        await update.message.reply_text("No active game! Use /newgame to create one.")
-        return
-    
-    game = games[chat_id]
+    cid = update.effective_chat.id
+    uid = update.effective_user.id
+    name = update.effective_user.first_name
+    if cid not in games:
+        return await update.message.reply_text("No game. /newgame first.")
+    game = games[cid]
     if game.game_started:
-        await update.message.reply_text("Game has already started!")
-        return
-    
-    if game.add_player(user_id, user_name):
-        await update.message.reply_text(f"{user_name} joined the game! ({len(game.players)}/{game.n} players)")
+        return await update.message.reply_text("Game started.")
+    if game.add_player(uid, name):
+        await update.message.reply_text(f"{name} joined ({len(game.players)}/{game.n}).")
     else:
-        await update.message.reply_text("You're already in the game or it's full!")
+        await update.message.reply_text("Already joined or full.")
 
 async def start_game(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Start the game"""
-    chat_id = update.effective_chat.id
-    
-    if chat_id not in games:
-        await update.message.reply_text("No active game! Use /newgame to create one.")
-        return
-    
-    game = games[chat_id]
-    if game.start_game():
-        current_player_name = game.player_names[game.get_current_player()]
-        await update.message.reply_text(f"Game started! 🎮\n\nCurrent turn: {current_player_name}")
-        
-        # Send cards to all players
-        for player_id in game.players:
-            cards_str = ", ".join(str(card) for card in game.player_cards[player_id])
-            try:
-                await context.bot.send_message(
-                    player_id,
-                    f"Your cards: {cards_str}\n\nUse /cards to view your cards anytime."
-                )
-            except Exception as e:
-                logger.error(f"Could not send cards to player {player_id}: {e}")
-    else:
-        await update.message.reply_text(f"Need at least 4 players to start! Currently: {len(game.players)}")
+    cid = update.effective_chat.id
+    if cid not in games:
+        return await update.message.reply_text("No game.")
+    game = games[cid]
+    if not game.start_game():
+        return await update.message.reply_text(f"Need 4+ players ({len(game.players)} now).")
+    cp = game.player_names[game.get_current_player()]
+    await update.message.reply_text(f"Game started! {cp}'s turn.")
+    for pid in game.players:
+        cards = ", ".join(map(str, game.player_cards[pid]))
+        try:
+            await context.bot.send_message(pid, f"Your cards: {cards}")
+        except:
+            pass
 
 async def show_cards(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Show player's cards"""
-    chat_id = update.effective_chat.id
-    user_id = update.effective_user.id
-    
-    if chat_id not in games:
-        await update.message.reply_text("No active game!")
-        return
-    
-    game = games[chat_id]
-    if user_id not in game.players:
-        await update.message.reply_text("You're not in this game!")
-        return
-    
+    cid = update.effective_chat.id
+    uid = update.effective_user.id
+    if cid not in games:
+        return await update.message.reply_text("No game.")
+    game = games[cid]
+    if uid not in game.players:
+        return await update.message.reply_text("Not in game.")
     if not game.game_started:
-        await update.message.reply_text("Game hasn't started yet!")
-        return
-    
-    cards = game.player_cards[user_id]
-    cards_str = ", ".join(str(card) for card in cards)
-    
-    # Create keyboard for giving cards
-    keyboard = []
-    if user_id == game.get_current_player() and not game.pending_card:
-        for card in set(cards):  # Unique cards only
-            keyboard.append([InlineKeyboardButton(f"Give card {card}", callback_data=f"give_{card}")])
-    
-    reply_markup = InlineKeyboardMarkup(keyboard) if keyboard else None
-    
-    message = f"Your cards: {cards_str}"
-    if user_id == game.get_current_player() and not game.pending_card:
-        message += "\n\nChoose a card to give to the next player:"
-    
-    await update.message.reply_text(message, reply_markup=reply_markup)
+        return await update.message.reply_text("Game not started.")
+    cards = game.player_cards[uid]
+    kb = []
+    if uid == game.get_current_player() and not game.pending_card:
+        kb = [[InlineKeyboardButton(f"Give {c}", callback_data=f"give_{c}")] for c in set(cards)]
+    await update.message.reply_text(
+        f"Cards: {', '.join(map(str,cards))}",
+        reply_markup=InlineKeyboardMarkup(kb) if kb else None
+    )
 
 async def game_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Show game status"""
-    chat_id = update.effective_chat.id
-    
-    if chat_id not in games:
-        await update.message.reply_text("No active game!")
-        return
-    
-    game = games[chat_id]
-    status = game.get_game_status()
-    await update.message.reply_text(status)
+    cid = update.effective_chat.id
+    if cid not in games:
+        return await update.message.reply_text("No game.")
+    await update.message.reply_text(games[cid].get_game_status())
 
 async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle button callbacks"""
-    query = update.callback_query
-    await query.answer()
-    
-    chat_id = query.message.chat.id
-    user_id = query.from_user.id
-    data = query.data
-    
-    if chat_id not in games:
-        await query.edit_message_text("No active game!")
-        return
-    
-    game = games[chat_id]
-    
+    q = update.callback_query
+    await q.answer()
+    cid = q.message.chat.id
+    uid = q.from_user.id
+    if cid not in games:
+        return await q.edit_message_text("No game.")
+    game = games[cid]
+    data = q.data
     if data.startswith("give_"):
-        card = int(data.split("_")[1])
-        if user_id == game.get_current_player():
-            if game.give_card(card):
-                next_player_name = game.player_names[game.get_next_player()]
-                await query.edit_message_text(f"You gave card {card} to {next_player_name}!")
-                
-                # Send acceptance prompt to next player
-                keyboard = [
-                    [InlineKeyboardButton("Accept", callback_data="accept_card")],
-                    [InlineKeyboardButton("Reject", callback_data="reject_card")]
-                ]
-                reply_markup = InlineKeyboardMarkup(keyboard)
-                
-                try:
-                    await context.bot.send_message(
-                        game.get_next_player(),
-                        f"You received card {card}! Do you want to accept it?", reply_markup=reply_markup
-                    )
-                except Exception as e:
-                    logger.error(f"Could not send message to next player: {e}")
-            else:
-                await query.edit_message_text("Invalid card selection!")
+        c = int(data.split("_")[1])
+        if uid != game.get_current_player():
+            return await q.edit_message_text("Not your turn.")
+        if game.give_card(c):
+            np = game.get_next_player()
+            await q.edit_message_text(f"Gave {c} to {game.player_names[np]}")
+            kb = [
+                [InlineKeyboardButton("Accept", callback_data="accept")],
+                [InlineKeyboardButton("Reject", callback_data="reject")]
+            ]
+            await context.bot.send_message(np, f"Receive {c}?", reply_markup=InlineKeyboardMarkup(kb))
         else:
-            await query.edit_message_text("It's not your turn!")
-    
-    elif data in ["accept_card", "reject_card"]:
-        if user_id == game.get_next_player():
-            accept = data == "accept_card"
-            game.receive_card(accept)
-            
-            if(game.game_finished):
-                winner_name = game.player_names[game.winner]
-                await query.edit_message_text(f"🎉 Game finished! Winner: {winner_name}")
-                await context.bot.send_message(chat_id, f"🎉 Game finished! Winner: {winner_name}")
-                del games[chat_id]
-            else:
-                action = "accepted" if accept else "rejected"
-                await query.edit_message_text(f"You {action} the card!")
-                
-                current_player_name = game.player_names[game.get_current_player()]
-                await context.bot.send_message(chat_id, f"Next turn: {current_player_name}")
+            await q.edit_message_text("Invalid.")
+    elif data in ("accept","reject"):
+        if uid != game.get_next_player():
+            return await q.edit_message_text("Not for you.")
+        ok = data == "accept"
+        game.receive_card(ok)
+        if game.game_finished:
+            win = game.player_names[game.winner]
+            await q.edit_message_text(f"🎉 {win} wins!")
+            await context.bot.send_message(cid, f"🎉 {win} wins!")
+            del games[cid]
         else:
-            await query.edit_message_text("This is not for you!")
+            await q.edit_message_text("Accepted." if ok else "Rejected.")
+            await context.bot.send_message(cid, f"Turn: {game.player_names[game.get_current_player()]}")
 
-
-def main():
-    """Main function"""
-    # Get token from environment variable
-    TOKEN = os.getenv('BOT_TOKEN', '7939689975:AAFUL_4FXaFCCIC36Z2Ma6NGQ0QI5urqe_k')
-    
-    # Create application
-    try:
-        application = Application.builder().token(TOKEN).build()
-    except Exception as e:
-        logger.error(f"Failed to create application: {e}")
-        return
-    
-    # Add handlers
-    application.add_handler(CommandHandler("start", start))
-    application.add_handler(CommandHandler("help", help_command))
-    application.add_handler(CommandHandler("newgame", new_game))
-    application.add_handler(CommandHandler("join", join_game))
-    application.add_handler(CommandHandler("startgame", start_game))
-    application.add_handler(CommandHandler("cards", show_cards))
-    application.add_handler(CommandHandler("status", game_status))
-    application.add_handler(CommandHandler("cancel", cancel_game))
-    application.add_handler(CallbackQueryHandler(button_callback))
-    
-    # Start the bot
-    try:
-        if os.getenv('RENDER_SERVICE_NAME'):
-            # Running on Render
-            PORT = int(os.environ.get('PORT', 10000))
-            RENDER_EXTERNAL_URL = os.getenv('RENDER_EXTERNAL_URL')
-            logger.info(f"Starting webhook on port {PORT}")
-            logger.info(f"Webhook URL: {RENDER_EXTERNAL_URL}/{TOKEN}")
-            application.run_webhook(
-                listen="0.0.0.0",
-                port=PORT,
-                url_path=TOKEN,
-                webhook_url=f"{RENDER_EXTERNAL_URL}/{TOKEN}"
-            )
-        elif os.getenv('HEROKU_APP_NAME'):
-            # Running on Heroku
-            PORT = int(os.environ.get('PORT', 5000))
-            application.run_webhook(
-                listen="0.0.0.0",
-                port=PORT,
-                url_path=TOKEN,
-                webhook_url=f"https://{os.getenv('HEROKU_APP_NAME')}.herokuapp.com/{TOKEN}"
-            )
-        else:
-            # Running locally
-            logger.info("Starting polling mode")
-            application.run_polling()
-    except Exception as e:
-        logger.error(f"Failed to start bot: {e}")
-        # Try polling as fallback
-        logger.info("Trying polling mode as fallback")
-        application.run_polling()
-
-if __name__ == '__main__':
-    main()
+if __name__ == "__main__":
+    TOKEN = os.getenv("BOT_TOKEN")
+    app = Application.builder().token(TOKEN).build()
+    build_handlers(app)
+    logger.info("Bot started in polling mode")
+    app.run_polling()
